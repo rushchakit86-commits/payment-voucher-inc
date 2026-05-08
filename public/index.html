@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบใบสำคัญจ่ายเงิน - INC Technology</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h2>INC Technology</h2>
+        <p>ระบบใบสำคัญจ่ายเงิน</p>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
+          <span class="icon">📊</span> แดชบอร์ด
+        </div>
+        <div class="nav-item" data-page="invoices" onclick="showPage('invoices')">
+          <span class="icon">📄</span> ใบกำกับภาษี
+          <span class="badge" id="invoiceCount">0</span>
+        </div>
+        <div class="nav-item" data-page="vouchers" onclick="showPage('vouchers')">
+          <span class="icon">💳</span> ใบสำคัญจ่ายเงิน
+          <span class="badge" id="voucherCount">0</span>
+        </div>
+        <div class="nav-item" data-page="projects" onclick="showPage('projects')">
+          <span class="icon">📁</span> โปรเจค
+        </div>
+        <div class="nav-item" data-page="search" onclick="showPage('search')">
+          <span class="icon">🔍</span> ค้นหา
+        </div>
+      </nav>
+      <div class="google-status" id="googleStatus">
+        <span class="status-dot disconnected"></span>
+        Google: ไม่ได้เชื่อมต่อ
+      </div>
+      <div class="google-status" id="aiStatus" style="margin-top:4px">
+        <span class="status-dot disconnected"></span>
+        AI: กำลังตรวจสอบ...
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- ========== Dashboard ========== -->
+      <div class="page-section active" id="page-dashboard">
+        <div class="page-header">
+          <h1>📊 แดชบอร์ด</h1>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon blue">📄</div>
+            <div class="stat-info">
+              <h3 id="statInvoices">0</h3>
+              <p>ใบกำกับภาษีทั้งหมด</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green">💳</div>
+            <div class="stat-info">
+              <h3 id="statVouchers">0</h3>
+              <p>ใบสำคัญจ่ายเงิน</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon orange">💰</div>
+            <div class="stat-info">
+              <h3 id="statAmount">฿0</h3>
+              <p>ยอดเงินรวม</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon red">⏳</div>
+            <div class="stat-info">
+              <h3 id="statPending">0</h3>
+              <p>รอดำเนินการ</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">สรุปตามโปรเจค</div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr><th>โปรเจค</th><th>จำนวนเอกสาร</th><th style="text-align:right">ยอดรวม (บาท)</th></tr>
+              </thead>
+              <tbody id="projectSummaryBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">เอกสารล่าสุด</div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr><th>เลขที่</th><th>โปรเจค</th><th>ผู้ขาย</th><th>วันที่</th><th style="text-align:right">ยอดรวม</th><th>สถานะ</th></tr>
+              </thead>
+              <tbody id="recentInvoicesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== ใบกำกับภาษี ========== -->
+      <div class="page-section" id="page-invoices">
+        <div class="page-header">
+          <h1>📄 ใบกำกับภาษี</h1>
+          <button class="btn btn-primary" onclick="openInvoiceModal()">+ เพิ่มใบกำกับภาษี</button>
+        </div>
+
+        <div class="search-bar">
+          <div class="search-input">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="invoiceSearch" placeholder="ค้นหาเลขที่, ผู้ขาย..." oninput="searchInvoices()">
+          </div>
+          <select class="form-control" style="width:auto" id="invoiceProjectFilter" onchange="searchInvoices()">
+            <option value="">ทุกโปรเจค</option>
+          </select>
+          <select class="form-control" style="width:auto" id="invoiceStatusFilter" onchange="searchInvoices()">
+            <option value="">ทุกสถานะ</option>
+            <option value="pending">รอดำเนินการ</option>
+            <option value="completed">เสร็จแล้ว</option>
+          </select>
+        </div>
+
+        <div class="card">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>เลขที่ใบกำกับภาษี</th><th>โปรเจค</th><th>ผู้ขาย</th>
+                  <th>วันที่</th><th style="text-align:right">ยอดรวม</th><th>สถานะ</th><th>จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="invoicesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== ใบสำคัญจ่ายเงิน ========== -->
+      <div class="page-section" id="page-vouchers">
+        <div class="page-header">
+          <h1>💳 ใบสำคัญจ่ายเงิน</h1>
+          <button class="btn btn-primary" onclick="openVoucherModal()">+ สร้างใบสำคัญจ่ายเงิน</button>
+        </div>
+
+        <div class="search-bar">
+          <div class="search-input">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="voucherSearch" placeholder="ค้นหาเลขที่, ผู้รับเงิน..." oninput="searchVouchers()">
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>เลขที่ใบสำคัญจ่าย</th><th>จ่ายให้แก่</th>
+                  <th>วันที่</th><th style="text-align:right">จำนวนสุทธิ</th><th>สถานะ</th><th>จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="vouchersBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== โปรเจค ========== -->
+      <div class="page-section" id="page-projects">
+        <div class="page-header">
+          <h1>📁 โปรเจค</h1>
+          <button class="btn btn-primary" onclick="openProjectModal()">+ เพิ่มโปรเจค</button>
+        </div>
+
+        <div class="card">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr><th>#</th><th>ชื่อโปรเจค</th><th>รายละเอียด</th><th>จำนวนเอกสาร</th><th>วันที่สร้าง</th></tr>
+              </thead>
+              <tbody id="projectsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== ค้นหา ========== -->
+      <div class="page-section" id="page-search">
+        <div class="page-header">
+          <h1>🔍 ค้นหาเอกสาร</h1>
+        </div>
+
+        <div class="card">
+          <div class="form-row">
+            <div class="form-group">
+              <label>คำค้นหา</label>
+              <input type="text" class="form-control" id="globalSearch" placeholder="เลขที่เอกสาร, ผู้ขาย, รายการสินค้า...">
+            </div>
+            <div class="form-group">
+              <label>โปรเจค</label>
+              <select class="form-control" id="searchProject">
+                <option value="">ทุกโปรเจค</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>ตั้งแต่วันที่</label>
+              <input type="date" class="form-control" id="searchDateFrom">
+            </div>
+            <div class="form-group">
+              <label>ถึงวันที่</label>
+              <input type="date" class="form-control" id="searchDateTo">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-lg" onclick="globalSearchDocs()" style="width:100%">🔍 ค้นหา</button>
+        </div>
+
+        <div class="card" id="searchResults" style="display:none">
+          <div class="card-title">ผลการค้นหา (<span id="searchResultCount">0</span> รายการ)</div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr><th>ประเภท</th><th>เลขที่</th><th>โปรเจค</th><th>รายละเอียด</th><th>วันที่</th><th style="text-align:right">ยอดเงิน</th><th>จัดการ</th></tr>
+              </thead>
+              <tbody id="searchResultsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ========== Modal: เพิ่มใบกำกับภาษี ========== -->
+  <div class="modal-overlay" id="invoiceModal">
+    <div class="modal" style="max-width:900px">
+      <div class="modal-header">
+        <h3>📄 เพิ่มใบกำกับภาษี</h3>
+        <button class="modal-close" onclick="closeModal('invoiceModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="invoiceForm" onsubmit="submitInvoice(event)">
+          <!-- โปรเจค -->
+          <div class="form-group" style="background:var(--primary-light);padding:16px;border-radius:var(--radius);margin-bottom:20px">
+            <label style="font-size:16px;font-weight:700;color:var(--primary-dark)">📁 เอกสารนี้อยู่โปรเจคอะไร?</label>
+            <select class="form-control" id="inv_project_id" required style="margin-top:8px;font-size:16px;padding:12px">
+              <option value="">-- เลือกโปรเจค --</option>
+            </select>
+            <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="quickAddProject()">+ เพิ่มโปรเจคใหม่</button>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>เลขที่ใบกำกับภาษี *</label>
+              <input type="text" class="form-control" id="inv_number" required placeholder="เช่น 6905-BR1439-00182">
+            </div>
+            <div class="form-group">
+              <label>วันที่ *</label>
+              <input type="date" class="form-control" id="inv_date" required>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>ชื่อผู้ขาย/ร้านค้า *</label>
+              <input type="text" class="form-control" id="inv_seller" required placeholder="เช่น บริษัท คอมเซเว่น จำกัด (มหาชน)">
+            </div>
+            <div class="form-group">
+              <label>เลขประจำตัวผู้เสียภาษี</label>
+              <input type="text" class="form-control" id="inv_tax_id" placeholder="เช่น 0107557000462">
+            </div>
+            <div class="form-group">
+              <label>สาขา</label>
+              <input type="text" class="form-control" id="inv_branch" placeholder="เช่น สาขาที่ 1439">
+            </div>
+          </div>
+
+          <!-- รายการสินค้า -->
+          <div class="card-title" style="margin-top:20px">รายการสินค้า/บริการ</div>
+          <div class="items-table">
+            <table id="itemsTable">
+              <thead>
+                <tr><th style="width:40px">#</th><th>รายการ</th><th style="width:80px">จำนวน</th><th style="width:120px">ราคา/หน่วย</th><th style="width:120px">จำนวนเงิน</th><th style="width:40px"></th></tr>
+              </thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+            <button type="button" class="btn btn-outline btn-sm" onclick="addItemRow()" style="margin-top:8px">+ เพิ่มรายการ</button>
+          </div>
+
+          <!-- ยอดเงิน -->
+          <div style="margin-top:20px;background:var(--gray-50);padding:16px;border-radius:var(--radius)">
+            <div class="form-row form-row-3">
+              <div class="form-group">
+                <label>รวมมูลค่าสินค้า (ก่อน VAT)</label>
+                <input type="number" step="0.01" class="form-control" id="inv_before_vat" onchange="calcInvoiceTotal()">
+              </div>
+              <div class="form-group">
+                <label>ภาษีมูลค่าเพิ่ม (VAT 7%)</label>
+                <input type="number" step="0.01" class="form-control" id="inv_vat">
+              </div>
+              <div class="form-group">
+                <label>ส่วนลด</label>
+                <input type="number" step="0.01" class="form-control" id="inv_discount" value="0" onchange="calcInvoiceTotal()">
+              </div>
+            </div>
+            <div class="form-row form-row-3">
+              <div class="form-group">
+                <label>ภาษีหัก ณ ที่จ่าย</label>
+                <input type="number" step="0.01" class="form-control" id="inv_wht" value="0" onchange="calcInvoiceTotal()">
+              </div>
+              <div class="form-group">
+                <label style="font-weight:700;color:var(--primary)">ยอดรวมทั้งสิ้น</label>
+                <input type="number" step="0.01" class="form-control" id="inv_grand_total" style="font-weight:700;font-size:18px">
+              </div>
+              <div class="form-group">
+                <label style="font-weight:700;color:var(--success)">ยอดสุทธิ</label>
+                <input type="number" step="0.01" class="form-control" id="inv_net" style="font-weight:700;font-size:18px">
+              </div>
+            </div>
+          </div>
+
+          <!-- อัปโหลดไฟล์ + AI สกัดข้อมูล -->
+          <div class="form-group" style="margin-top:20px">
+            <label>แนบไฟล์ใบกำกับภาษี (PDF/รูปภาพ)</label>
+            <div class="file-upload-area" onclick="document.getElementById('inv_file').click()">
+              <div class="icon">📎</div>
+              <p>คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวาง</p>
+              <p class="file-name" id="inv_file_name"></p>
+            </div>
+            <input type="file" id="inv_file" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif" onchange="showFileName(this, 'inv_file_name')">
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+              <button type="button" class="btn btn-warning" onclick="extractFromFile()" id="extractBtn">
+                🤖 AI สกัดข้อมูลอัตโนมัติ
+              </button>
+              <span id="extractStatus" style="font-size:13px;color:var(--gray-500)"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>หมายเหตุ</label>
+            <textarea class="form-control" id="inv_notes" placeholder="หมายเหตุเพิ่มเติม..."></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('invoiceModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="document.getElementById('invoiceForm').requestSubmit()">💾 บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Modal: สร้างใบสำคัญจ่ายเงิน ========== -->
+  <div class="modal-overlay" id="voucherModal">
+    <div class="modal" style="max-width:900px">
+      <div class="modal-header">
+        <h3>💳 สร้างใบสำคัญจ่ายเงิน</h3>
+        <button class="modal-close" onclick="closeModal('voucherModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="voucherForm" onsubmit="submitVoucher(event)">
+          <!-- เลือกจากใบกำกับภาษี -->
+          <div class="form-group" style="background:var(--success-light);padding:16px;border-radius:var(--radius);margin-bottom:20px">
+            <label style="font-size:16px;font-weight:700;color:var(--success)">📄 สร้างจากใบกำกับภาษี (ถ้ามี)</label>
+            <select class="form-control" id="vcr_invoice_id" onchange="fillFromInvoice(this.value)" style="margin-top:8px">
+              <option value="">-- ไม่เลือก / กรอกเอง --</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>วันที่ใบสำคัญจ่าย *</label>
+              <input type="date" class="form-control" id="vcr_date" required>
+            </div>
+            <div class="form-group">
+              <label>จ่ายให้แก่ *</label>
+              <input type="text" class="form-control" id="vcr_payee" required placeholder="ชื่อผู้รับเงิน/บริษัท">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>รายการ</label>
+            <textarea class="form-control" id="vcr_description" placeholder="รายละเอียดรายการจ่ายเงิน"></textarea>
+          </div>
+
+          <div style="background:var(--gray-50);padding:16px;border-radius:var(--radius);margin-top:16px">
+            <div class="form-row form-row-4">
+              <div class="form-group">
+                <label>จำนวนเงิน</label>
+                <input type="number" step="0.01" class="form-control" id="vcr_amount" onchange="calcVoucherTotal()">
+              </div>
+              <div class="form-group">
+                <label>ภาษีมูลค่าเพิ่ม</label>
+                <input type="number" step="0.01" class="form-control" id="vcr_vat" onchange="calcVoucherTotal()">
+              </div>
+              <div class="form-group">
+                <label>ภาษีหัก ณ ที่จ่าย</label>
+                <input type="number" step="0.01" class="form-control" id="vcr_wht" value="0" onchange="calcVoucherTotal()">
+              </div>
+              <div class="form-group">
+                <label style="font-weight:700;color:var(--primary)">จำนวนเงินสุทธิ</label>
+                <input type="number" step="0.01" class="form-control" id="vcr_net" style="font-weight:700;font-size:18px">
+              </div>
+            </div>
+          </div>
+
+          <!-- วิธีชำระเงิน -->
+          <div style="margin-top:16px">
+            <div class="form-row">
+              <div class="form-group">
+                <label>วิธีชำระเงิน</label>
+                <select class="form-control" id="vcr_payment_method" onchange="toggleChequeFields()">
+                  <option value="cash">เงินสด</option>
+                  <option value="cheque">เช็ค</option>
+                  <option value="transfer">โอนเงิน</option>
+                </select>
+              </div>
+              <div class="form-group" id="chequeFields" style="display:none">
+                <label>ธนาคาร / สาขา / เลขที่เช็ค</label>
+                <input type="text" class="form-control" id="vcr_cheque_info" placeholder="เช่น ธนาคารไทยพาณิชย์/ถนนนวลจันทร์/เลขที่...">
+              </div>
+            </div>
+          </div>
+
+          <!-- รายการบัญชี -->
+          <div class="card-title" style="margin-top:20px">รายการบัญชี (เดบิต/เครดิต)</div>
+          <div class="items-table">
+            <table id="accountsTable">
+              <thead>
+                <tr><th style="width:120px">รหัสบัญชี</th><th>ชื่อบัญชี</th><th style="width:130px">เดบิต</th><th style="width:130px">เครดิต</th><th style="width:40px"></th></tr>
+              </thead>
+              <tbody id="accountsBody"></tbody>
+            </table>
+            <button type="button" class="btn btn-outline btn-sm" onclick="addAccountRow()" style="margin-top:8px">+ เพิ่มรายการบัญชี</button>
+          </div>
+
+          <!-- ผู้รับผิดชอบ -->
+          <div class="form-row" style="margin-top:20px">
+            <div class="form-group">
+              <label>จัดทำโดย</label>
+              <input type="text" class="form-control" id="vcr_prepared_by" placeholder="ชื่อผู้จัดทำ">
+            </div>
+            <div class="form-group">
+              <label>อนุมัติและจ่ายเงินโดย</label>
+              <input type="text" class="form-control" id="vcr_approved_by">
+            </div>
+            <div class="form-group">
+              <label>รับเงินโดย</label>
+              <input type="text" class="form-control" id="vcr_received_by">
+            </div>
+            <div class="form-group">
+              <label>ตรวจสอบและบันทึกบัญชีโดย</label>
+              <input type="text" class="form-control" id="vcr_checked_by">
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('voucherModal')">ยกเลิก</button>
+        <button class="btn btn-success" onclick="document.getElementById('voucherForm').requestSubmit()">💾 บันทึกและสร้างใบสำคัญจ่าย</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Modal: เพิ่มโปรเจค ========== -->
+  <div class="modal-overlay" id="projectModal">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3>📁 เพิ่มโปรเจค</h3>
+        <button class="modal-close" onclick="closeModal('projectModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="projectForm" onsubmit="submitProject(event)">
+          <div class="form-group">
+            <label>ชื่อโปรเจค *</label>
+            <input type="text" class="form-control" id="proj_name" required placeholder="เช่น โปรเจค Notebook สำนักงาน">
+          </div>
+          <div class="form-group">
+            <label>รายละเอียด</label>
+            <textarea class="form-control" id="proj_desc" placeholder="รายละเอียดโปรเจค..."></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('projectModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="document.getElementById('projectForm').requestSubmit()">💾 บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Modal: ดูรายละเอียดใบกำกับภาษี ========== -->
+  <div class="modal-overlay" id="invoiceDetailModal">
+    <div class="modal" style="max-width:800px">
+      <div class="modal-header">
+        <h3>📄 รายละเอียดใบกำกับภาษี</h3>
+        <button class="modal-close" onclick="closeModal('invoiceDetailModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="invoiceDetailContent"></div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('invoiceDetailModal')">ปิด</button>
+        <button class="btn btn-success" id="createVoucherFromInvoice" onclick="createVoucherFromInvoice()">💳 สร้างใบสำคัญจ่ายเงิน</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== Modal: ดูรายละเอียดใบสำคัญจ่าย ========== -->
+  <div class="modal-overlay" id="voucherDetailModal">
+    <div class="modal" style="max-width:800px">
+      <div class="modal-header">
+        <h3>💳 รายละเอียดใบสำคัญจ่ายเงิน</h3>
+        <button class="modal-close" onclick="closeModal('voucherDetailModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="voucherDetailContent"></div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('voucherDetailModal')">ปิด</button>
+        <button class="btn btn-primary" id="printVoucherBtn" onclick="printVoucher()">🖨️ พิมพ์ใบสำคัญจ่าย</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
