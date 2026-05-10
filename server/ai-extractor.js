@@ -1,17 +1,20 @@
 const fs = require('fs');
 const path = require('path');
 
-const EXTRACTION_PROMPT = `You are an expert at reading Thai tax invoices.
-Analyze this document and extract ALL data into JSON format.
-Be extremely precise with numbers, dates, and Thai text.
+const EXTRACTION_PROMPT = `You are an expert at reading Thai tax invoices (ใบกำกับภาษี / ใบเสร็จรับเงิน).
 
-Return ONLY valid JSON (no markdown, no explanation):
+IMPORTANT DEFINITIONS:
+- "seller" (ผู้ขาย) = the company that ISSUED this invoice. Usually appears at the TOP/HEADER of the document with their logo and address.
+- "buyer" (ผู้ซื้อ) = the company that RECEIVES the goods/services. Usually appears under "ชื่อลูกค้า", "นามผู้ซื้อ", or "Customer".
+- "seller_branch" = branch info, often shown as "สำนักงานใหญ่" (head office) or a 5-digit branch number like "00000".
+
+Extract ALL data into this exact JSON format. Return ONLY valid JSON (no markdown, no explanation, no extra text):
 {
-  "invoice_number": "invoice number",
-  "invoice_date": "YYYY-MM-DD format",
+  "invoice_number": "the invoice/receipt number (เลขที่ใบกำกับภาษี)",
+  "invoice_date": "YYYY-MM-DD",
   "seller_name": "seller company name in Thai",
-  "seller_tax_id": "13-digit tax ID",
-  "seller_branch": "branch number or office name",
+  "seller_tax_id": "seller 13-digit tax ID (เลขประจำตัวผู้เสียภาษี of seller)",
+  "seller_branch": "branch number or สำนักงานใหญ่",
   "buyer_name": "buyer company name",
   "buyer_tax_id": "buyer 13-digit tax ID",
   "items": [
@@ -19,18 +22,44 @@ Return ONLY valid JSON (no markdown, no explanation):
   ],
   "discount": 0.00,
   "total_before_vat": 0.00,
+  "vat_rate": 7,
   "vat_amount": 0.00,
   "grand_total": 0.00,
-  "total_in_words": "amount in Thai words",
-  "note": "any notes"
+  "total_in_words": "amount in Thai words (จำนวนเงินรวมทั้งสิ้น ตัวอักษร)",
+  "note": "any notes or payment terms"
 }
 
-Rules:
-- All amounts must be numbers (not strings)
-- Date in YYYY-MM-DD (convert Thai Buddhist year: subtract 543)
-- seller_name in Thai if available
-- Extract ALL line items
-- Empty string for missing text, 0 for missing numbers`;
+RULES:
+1. All amounts MUST be numbers (not strings). Example: 1234.56 not "1,234.56"
+2. Date MUST be YYYY-MM-DD. Convert Thai Buddhist year (พ.ศ.) by subtracting 543. Example: 25/12/2567 → "2024-12-25"
+3. seller_name MUST be in Thai if Thai text is available
+4. Extract ALL line items from the table, not just the first one
+5. If data is NOT found in the document, use "" for text and 0 for numbers. NEVER guess or make up values.
+6. grand_total should equal total_before_vat + vat_amount (verify this)
+7. vat_rate is usually 7 (percent) in Thailand, but read the actual rate from the document
+8. invoice_number formats vary: could be "IV-2024-001", "2024001234", "TAX/2567/001", etc. — copy exactly as shown
+
+EXAMPLE OUTPUT:
+{
+  "invoice_number": "IV67-00123",
+  "invoice_date": "2024-03-15",
+  "seller_name": "บริษัท เอบีซี จำกัด",
+  "seller_tax_id": "0105556012345",
+  "seller_branch": "สำนักงานใหญ่",
+  "buyer_name": "บริษัท ไอเอ็นซี เทคโนโลยี จำกัด",
+  "buyer_tax_id": "0105565078901",
+  "items": [
+    {"item_no": 1, "description": "ค่าบริการรายเดือน มี.ค. 2567", "quantity": 1, "unit_price": 5000.00, "amount": 5000.00},
+    {"item_no": 2, "description": "ค่าอุปกรณ์เสริม", "quantity": 2, "unit_price": 750.00, "amount": 1500.00}
+  ],
+  "discount": 0.00,
+  "total_before_vat": 6500.00,
+  "vat_rate": 7,
+  "vat_amount": 455.00,
+  "grand_total": 6955.00,
+  "total_in_words": "หกพันเก้าร้อยห้าสิบห้าบาทถ้วน",
+  "note": ""
+}`;
 
 class AIExtractor {
   constructor() {
@@ -122,29 +151,38 @@ class AIExtractor {
       var response = await this.httpGet(this.ollamaUrl + '/api/tags');
       var data = JSON.parse(response);
       if (data.models && data.models.length > 0) {
-        var visionModels = ['gemma4', 'gemma3', 'llava', 'llama3.2-vision', 'moondream', 'bakllava'];
+        var visionModels = ['gemma4', 'gemma3', 'llava', 'llama3.2-vision', 'moondream', 'bakllava', 'minicpm-v'];
         var allModels = data.models.map(function(m) { return m.name; });
+
+        // Priority 1: Vision models (best for invoice extraction)
         for (var i = 0; i < visionModels.length; i++) {
           for (var j = 0; j < allModels.length; j++) {
             if (allModels[j].toLowerCase().indexOf(visionModels[i]) >= 0) {
               this.ollamaModel = allModels[j];
+              this._isVisionModel = true;
               this.provider = 'ollama';
               console.log('[AI] Auto-detected Ollama vision model: ' + this.ollamaModel);
               return true;
             }
           }
         }
+
+        // Priority 2: Cloud models
         for (var k = 0; k < allModels.length; k++) {
           if (allModels[k].indexOf(':cloud') >= 0) {
             this.ollamaModel = allModels[k];
+            this._isVisionModel = false;
             this.provider = 'ollama';
             console.log('[AI] Auto-detected Ollama cloud model: ' + this.ollamaModel);
             return true;
           }
         }
+
+        // Priority 3: First available model (text-only — warn user)
         this.ollamaModel = allModels[0];
+        this._isVisionModel = false;
         this.provider = 'ollama';
-        console.log('[AI] Using first Ollama model: ' + this.ollamaModel);
+        console.log('[AI] WARNING: Using text-only Ollama model: ' + this.ollamaModel + '. For better results with PDF invoices, install a vision model: ollama pull gemma3:4b');
         return true;
       }
     } catch (e) {
@@ -197,7 +235,7 @@ class AIExtractor {
 
       var data = new Uint8Array(fs.readFileSync(filePath));
       var doc = await pdfjsLib.getDocument({ data: data, useSystemFonts: true }).promise;
-      var numPages = Math.min(doc.numPages, 2); // Max 2 pages for speed
+      var numPages = Math.min(doc.numPages, 5); // Max 5 pages to cover multi-page invoices
       var images = [];
 
       for (var i = 1; i <= numPages; i++) {
@@ -279,7 +317,14 @@ class AIExtractor {
           return fallback;
         }
         data.success = true;
-        data.confidence = filled.length >= 3 ? 'high' : filled.length >= 2 ? 'medium' : 'low';
+        // Improved confidence: require numbers to add up for 'high'
+        var numbersOk = !data._numbers_mismatch && data.grand_total > 0;
+        var hasKey = filled.length >= 3;
+        data.confidence = (hasKey && numbersOk) ? 'high' : filled.length >= 2 ? 'medium' : 'low';
+        if (data._numbers_mismatch) {
+          data.confidence_note = 'ตัวเลขไม่สอดคล้อง: total_before_vat + vat_amount ≠ grand_total';
+          delete data._numbers_mismatch;
+        }
         data.extraction_method = this.provider + (this.provider === 'ollama' && this.ollamaModel ? ' (' + this.ollamaModel + ')' : '');
         return data;
       }
@@ -377,7 +422,7 @@ class AIExtractor {
   async extractWithOllama(filePath, base64Data, mimeType) {
     var isImage = mimeType.startsWith('image/');
     var isPdf = mimeType === 'application/pdf';
-    var isVisionModel = /gemma[34]|llava|vision|moondream|bakllava/i.test(this.ollamaModel);
+    var isVisionModel = /gemma[34]|llava|vision|moondream|bakllava|minicpm-v/i.test(this.ollamaModel);
 
     if (isVisionModel) {
       // VISION MODEL: Send images for visual analysis
@@ -433,6 +478,12 @@ class AIExtractor {
       rawText = 'Could not extract text: ' + e.message;
     }
 
+    // Detect scanned PDF (no text layer)
+    if (!rawText || rawText.trim().length < 50) {
+      console.log('[AI] WARNING: PDF appears to be scanned (text length: ' + (rawText ? rawText.trim().length : 0) + '). Text-only models will produce poor results. Use Gemini or Claude for vision-based extraction.');
+      throw new Error('PDF appears to be scanned/image-based. Text extraction returned insufficient data (' + (rawText ? rawText.trim().length : 0) + ' chars). Please use a vision-capable AI provider (Gemini, Claude, or Ollama vision model).');
+    }
+
     var textPrompt = EXTRACTION_PROMPT + '\n\nHere is the raw text from the Thai tax invoice PDF. Thai characters may be garbled, but numbers and English text should be correct:\n\n---\n' + rawText.substring(0, 5000) + '\n---';
 
     var body = {
@@ -453,9 +504,9 @@ class AIExtractor {
         const pdfParse = require('pdf-parse');
         const data = await pdfParse(fs.readFileSync(filePath));
         rawText = data.text.substring(0, 8000);
-        if (!rawText || rawText.trim().length === 0) {
-          console.log('[AI] PDF text extraction returned empty, skipping DeepSeek');
-          throw new Error('No text extracted from PDF');
+        if (!rawText || rawText.trim().length < 50) {
+          console.log('[AI] PDF appears to be scanned (text length: ' + (rawText ? rawText.trim().length : 0) + '), skipping DeepSeek');
+          throw new Error('PDF appears to be scanned/image-based. Use a vision-capable AI provider.');
         }
       } catch (e) {
         console.log('[AI] DeepSeek: PDF text extraction failed:', e.message);
@@ -585,13 +636,23 @@ class AIExtractor {
     if (!text) return null;
     var jsonStr = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+    // Find the outermost JSON object — handle nested braces correctly
     var start = jsonStr.indexOf('{');
-    var end = jsonStr.lastIndexOf('}');
-    if (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end + 1);
+    if (start < 0) return null;
+    var depth = 0;
+    var end = -1;
+    for (var i = start; i < jsonStr.length; i++) {
+      if (jsonStr[i] === '{') depth++;
+      else if (jsonStr[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end < 0) return null;
+    jsonStr = jsonStr.substring(start, end + 1);
 
     try {
       var data = JSON.parse(jsonStr);
-      return {
+
+      var result = {
         invoice_number: String(data.invoice_number || ''),
         invoice_date: String(data.invoice_date || ''),
         seller_name: String(data.seller_name || ''),
@@ -610,11 +671,49 @@ class AIExtractor {
         }) : [],
         discount: parseFloat(data.discount) || 0,
         total_before_vat: parseFloat(data.total_before_vat) || 0,
+        vat_rate: parseFloat(data.vat_rate) || 7,
         vat_amount: parseFloat(data.vat_amount) || 0,
         grand_total: parseFloat(data.grand_total) || 0,
         total_in_words: String(data.total_in_words || ''),
         note: String(data.note || '')
       };
+
+      // Cross-validation: fix swapped grand_total and total_before_vat
+      if (result.grand_total > 0 && result.total_before_vat > 0 && result.grand_total < result.total_before_vat) {
+        console.log('[AI] Detected swapped totals, fixing: grand_total=' + result.grand_total + ' total_before_vat=' + result.total_before_vat);
+        var temp = result.grand_total;
+        result.grand_total = result.total_before_vat;
+        result.total_before_vat = temp;
+      }
+
+      // Cross-validation: check total_before_vat + vat_amount ≈ grand_total
+      if (result.total_before_vat > 0 && result.vat_amount > 0 && result.grand_total > 0) {
+        var expectedTotal = result.total_before_vat + result.vat_amount;
+        var diff = Math.abs(expectedTotal - result.grand_total);
+        var tolerance = result.grand_total * 0.02; // 2% tolerance for rounding
+        if (diff > tolerance) {
+          console.log('[AI] WARNING: Numbers don\'t add up. before_vat(' + result.total_before_vat + ') + vat(' + result.vat_amount + ') = ' + expectedTotal + ' vs grand_total(' + result.grand_total + '), diff=' + diff.toFixed(2));
+          result._numbers_mismatch = true;
+        }
+      }
+
+      // Cross-validation: if grand_total is 0 but we have items, try to calculate
+      if (result.grand_total === 0 && result.items.length > 0) {
+        var itemsTotal = result.items.reduce(function(sum, item) { return sum + (item.amount || 0); }, 0);
+        if (itemsTotal > 0) {
+          result.total_before_vat = itemsTotal - result.discount;
+          result.vat_amount = Math.round(result.total_before_vat * (result.vat_rate / 100) * 100) / 100;
+          result.grand_total = result.total_before_vat + result.vat_amount;
+          console.log('[AI] Calculated totals from items: grand_total=' + result.grand_total);
+        }
+      }
+
+      // Validate tax_id format (should be 13 digits)
+      if (result.seller_tax_id && !/^\d{13}$/.test(result.seller_tax_id.replace(/[-\s]/g, ''))) {
+        console.log('[AI] WARNING: seller_tax_id format invalid: ' + result.seller_tax_id);
+      }
+
+      return result;
     } catch (e) {
       console.error('[AI] JSON parse error:', e.message, 'Raw:', jsonStr.substring(0, 200));
       return null;

@@ -106,13 +106,18 @@ app.post('/api/invoices', upload.single('file'), async (req, res) => {
       totalBeforeVat = temp;
     }
 
-    // ตรวจสอบ VAT ~7% ถ้าไม่ตรง ให้คำนวณใหม่
+    // ตรวจสอบว่า grand_total ≈ total_before_vat + vat_amount (ใช้ VAT rate จาก AI ไม่ hardcode 7%)
     if (vatAmount > 0 && totalBeforeVat > 0) {
-      const expectedVat = Math.round(totalBeforeVat * 0.07 * 100) / 100;
       const expectedTotal = Math.round((totalBeforeVat + vatAmount) * 100) / 100;
       if (Math.abs(grandTotal - expectedTotal) > 1) {
-        console.log('[Validation] Grand total mismatch, recalculating: expected=' + expectedTotal + ' got=' + grandTotal);
-        grandTotal = expectedTotal;
+        console.log('[Validation] Grand total mismatch: before_vat(' + totalBeforeVat + ') + vat(' + vatAmount + ') = ' + expectedTotal + ' vs grand_total(' + grandTotal + ')');
+        // ใช้ค่าจาก AI ถ้า grand_total ใกล้เคียง expectedTotal มากกว่า ให้แก้ไข
+        if (Math.abs(grandTotal - expectedTotal) < grandTotal * 0.05) {
+          grandTotal = expectedTotal;
+          console.log('[Validation] Auto-fixed grand_total to ' + grandTotal);
+        } else {
+          console.log('[Validation] WARNING: Large discrepancy, keeping AI values as-is for manual review');
+        }
       }
     }
 

@@ -46,59 +46,101 @@ class InvoiceExtractor {
 
     try {
       // ===== Invoice Number =====
-      var invMatch = text.match(/(\d{4}-[A-Z]{2}\d{3,5}-\d{3,6})/);
-      if (invMatch) result.invoice_number = invMatch[1];
-
-      // ===== Date (dd/mm/yyyy) =====
-      var dateMatch = text.match(/(\d{2}\/\d{2}\/\d{4})/);
-      if (dateMatch) result.invoice_date = this.parseThaiDate(dateMatch[1]);
-
-      // ===== Seller Name from digital signature =====
-      var sigMatch = text.match(/cn=([^,]+)/);
-      if (sigMatch) {
-        result.seller_name = sigMatch[1].trim();
-      } else {
-        var signedBy = text.match(/Digitally signed by\s+(.+?)[\n\r]/);
-        if (signedBy) result.seller_name = signedBy[1].trim();
+      // Try multiple patterns common in Thai invoices
+      var invPatterns = [
+        /(?:เลขที่|Invoice\s*(?:No\.?|Number|#)|No\.?|เลขที่ใบกำกับ)[:\s]*([A-Z0-9][\w\-\/]{3,20})/i,
+        /(\d{4}-[A-Z]{2}\d{3,5}-\d{3,6})/,                    // 2024-AB1234-001
+        /([A-Z]{2,4}[\-\/]\d{2,4}[\-\/]\d{3,6})/,             // IV-2024-001, TAX/2567/001
+        /([A-Z]{2,4}\d{2,4}-\d{3,6})/,                         // IV67-00123
+        /(?:Invoice|Receipt|Tax)[:\s#]*([A-Z0-9][\w\-]{4,20})/i // Invoice: ABC12345
+      ];
+      for (var ip = 0; ip < invPatterns.length; ip++) {
+        var invMatch = text.match(invPatterns[ip]);
+        if (invMatch) { result.invoice_number = invMatch[1].trim(); break; }
       }
-      if (!result.seller_name && /com7|comseven/i.test(text)) {
-        result.seller_name = 'Com7 Public Company Limited';
+
+      // ===== Date (dd/mm/yyyy or other formats) =====
+      var datePatterns = [
+        /(?:วันที่|Date)[:\s]*(\d{1,2}[\/-]\d{1,2}[\/-]\d{4})/i,
+        /(\d{1,2}[\/-]\d{1,2}[\/-]\d{4})/,
+        /(\d{1,2}\s+(?:ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.)\s+\d{4})/
+      ];
+      for (var dp = 0; dp < datePatterns.length; dp++) {
+        var dateMatch = text.match(datePatterns[dp]);
+        if (dateMatch) { result.invoice_date = this.parseThaiDate(dateMatch[1]); break; }
+      }
+
+      // ===== Seller Name =====
+      // Try Thai company name pattern first
+      var thaiCompanyMatch = text.match(/(?:บริษัท|ห้างหุ้นส่วน)\s+[^\n]{3,50}\s*(?:จำกัด|มหาชน)/);
+      if (thaiCompanyMatch) {
+        result.seller_name = thaiCompanyMatch[0].trim();
+      } else {
+        // Try digital signature
+        var sigMatch = text.match(/cn=([^,]+)/);
+        if (sigMatch) {
+          result.seller_name = sigMatch[1].trim();
+        } else {
+          var signedBy = text.match(/Digitally signed by\s+(.+?)[\n\r]/);
+          if (signedBy) result.seller_name = signedBy[1].trim();
+        }
       }
 
       // ===== Tax IDs (13 digits) =====
       var taxIds = [];
-      var taxRe = /(\d{13})/g;
+      var taxRe = /\b(\d{13})\b/g;
       var tm;
       while ((tm = taxRe.exec(text)) !== null) taxIds.push(tm[1]);
       if (taxIds.length > 0) result.seller_tax_id = taxIds[0];
 
-      // ===== Branch from invoice number =====
-      if (result.invoice_number) {
+      // ===== Branch =====
+      var branchMatch = text.match(/(?:สาขา|Branch)[:\s]*([^\n]{2,30})/i);
+      if (branchMatch) {
+        result.seller_branch = branchMatch[1].trim();
+      } else if (result.invoice_number) {
         var brFromInv = result.invoice_number.match(/-[A-Z]{2}(\d{4})-/);
         if (brFromInv) result.seller_branch = brFromInv[1];
       }
 
-      // ===== Amounts =====
-      var discIdx = text.search(/Discount/i);
-      if (discIdx >= 0) {
-        var afterDisc = text.substring(discIdx);
-        var amtMatches = afterDisc.match(/\b([\d,]+\.\d{2})\b/g);
-        if (amtMatches && amtMatches.length >= 4) {
-          var amounts = amtMatches.map(function(a) { return parseFloat(a.replace(/,/g, '')); });
-          result.discount = amounts[0];
-          result.grand_total = amounts[1];
-          result.vat_amount = amounts[2];
-          result.total_before_vat = amounts[3];
-        }
+      // ===== Amounts — keyword-based extraction =====
+      // Grand Total / จำนวนเงินรวมทั้งสิ้น
+      var gtPatterns = [
+        /(?:Grand\s*Total|จำนวนเงินรวมทั้งสิ้น|ยอดรวมสุทธิ|รวมทั้งสิ้น|Total\s*Amount|Net\s*Total)[:\s]*([\d,]+\.\d{2})/i,
+        /(?:รวมเงิน|Total)[:\s]*([\d,]+\.\d{2})/i
+      ];
+      for (var gp = 0; gp < gtPatterns.length; gp++) {
+        var gtMatch = text.match(gtPatterns[gp]);
+        if (gtMatch) { result.grand_total = parseFloat(gtMatch[1].replace(/,/g, '')); break; }
       }
-      // Fallback
-      if (!result.grand_total) {
-        var gtLine = text.match(/Grand\s*Total[^\n]*([\d,]+\.\d{2})/i);
-        if (gtLine) result.grand_total = parseFloat(gtLine[1].replace(/,/g, ''));
+
+      // VAT / ภาษีมูลค่าเพิ่ม
+      var vatPatterns = [
+        /(?:VAT|ภาษีมูลค่าเพิ่ม|Vat\s*\d*%?)[:\s]*([\d,]+\.\d{2})/i
+      ];
+      for (var vp = 0; vp < vatPatterns.length; vp++) {
+        var vatMatch = text.match(vatPatterns[vp]);
+        if (vatMatch) { result.vat_amount = parseFloat(vatMatch[1].replace(/,/g, '')); break; }
       }
-      if (!result.vat_amount) {
-        var vatLine = text.match(/VAT[^\n]*([\d,]+\.\d{2})/i);
-        if (vatLine) result.vat_amount = parseFloat(vatLine[1].replace(/,/g, ''));
+
+      // Total Before VAT / มูลค่าสินค้า
+      var tbvPatterns = [
+        /(?:Total\s*Before\s*VAT|มูลค่าสินค้า|ราคาสินค้า|มูลค่าก่อนภาษี|Sub\s*Total|Subtotal)[:\s]*([\d,]+\.\d{2})/i
+      ];
+      for (var tp = 0; tp < tbvPatterns.length; tp++) {
+        var tbvMatch = text.match(tbvPatterns[tp]);
+        if (tbvMatch) { result.total_before_vat = parseFloat(tbvMatch[1].replace(/,/g, '')); break; }
+      }
+
+      // Discount / ส่วนลด
+      var discMatch = text.match(/(?:Discount|ส่วนลด)[:\s]*([\d,]+\.\d{2})/i);
+      if (discMatch) result.discount = parseFloat(discMatch[1].replace(/,/g, ''));
+
+      // Calculate missing values
+      if (result.total_before_vat > 0 && result.vat_amount > 0 && !result.grand_total) {
+        result.grand_total = result.total_before_vat + result.vat_amount;
+      }
+      if (result.grand_total > 0 && result.vat_amount > 0 && !result.total_before_vat) {
+        result.total_before_vat = result.grand_total - result.vat_amount;
       }
 
       // ===== Items =====
