@@ -54,6 +54,10 @@ function closeModal(id) { document.getElementById(id).classList.remove('active')
 async function api(url, options = {}) {
   try {
     const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('เซิร์ฟเวอร์ตอบกลับผิดรูปแบบ (ไม่ใช่ JSON) — อาจเกิดจาก timeout หรือเซิร์ฟเวอร์มีปัญหา');
+    }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
     return data;
@@ -930,6 +934,12 @@ async function extractFromFile() {
     const res = await fetch('/api/extract', { method: 'POST', body: formData, signal: controller.signal });
     clearTimeout(timeoutId);
     clearInterval(timer);
+
+    // ตรวจสอบว่า response เป็น JSON หรือไม่ (Nginx อาจส่ง HTML 502/504 เมื่อ timeout)
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('AI ใช้เวลานานเกินไป (timeout) — ลองอัปโหลดไฟล์ขนาดเล็กลง หรือใช้ PDF แทนรูปภาพ');
+    }
     const data = await res.json();
 
     if (!data.success) {
